@@ -1,5 +1,6 @@
-streamlit==1.35.0
-ultralytics
-opencv-python-headless
+streamlit
 streamlit-webrtc
-pyttsx3
+ultralytics
+opencv-python
+numpy
+gtts
