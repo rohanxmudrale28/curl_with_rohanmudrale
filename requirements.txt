@@ -1,6 +1,7 @@
 streamlit
 streamlit-webrtc
 ultralytics
-opencv-python-headless
+opencv-python
 numpy
-gtts
+gTTS
+mpg123
