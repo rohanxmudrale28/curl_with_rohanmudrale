@@ -1,82 +1,124 @@
 import cv2
-import gradio as gr
 import numpy as np
 from ultralytics import YOLO
 from gtts import gTTS
 import os
 import tempfile
+import streamlit as st
 
-model = YOLO("yolov8n-pose.pt")  # Make sure this is downloaded
+# Load YOLO pose model
+model = YOLO("yolov8n-pose.pt")
 
-class BicepCounter:
+# Text-to-speech intro (uses gTTS)
+def speak(text):
+    tts = gTTS(text)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        temp_path = fp.name
+        tts.save(temp_path)
+    st.audio(temp_path, format="audio/mp3")
+
+speak("Hey! Rohan created me. I'm your AI Trainer. Let's count your bicep curls.")
+
+# Angle calculator
+def calculate_angle(a, b, c):
+    a, b, c = np.array(a), np.array(b), np.array(c)
+    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
+    angle = np.abs(radians * 180.0 / np.pi)
+    return 360 - angle if angle > 180.0 else angle
+
+# Draw skeleton on the frame
+def draw_skeleton(frame, landmarks):
+    skeleton_connections = [
+        (5, 7), (7, 9), (6, 8), (8, 10), (5, 6),
+        (11, 13), (13, 15), (12, 14), (14, 16),
+        (11, 12), (5, 11), (6, 12)
+    ]
+    for i, j in skeleton_connections:
+        if i < len(landmarks) and j < len(landmarks):
+            pt1 = tuple(landmarks[i].astype(int))
+            pt2 = tuple(landmarks[j].astype(int))
+            cv2.line(frame, pt1, pt2, (0, 255, 255), 2)
+    for point in landmarks:
+        cv2.circle(frame, tuple(point.astype(int)), 4, (0, 0, 255), -1)
+
+# Rep Counter Class
+class BicepRepCounter:
     def __init__(self):
         self.left_counter = 0
         self.right_counter = 0
-        self.prev_left_angle = 180
-        self.prev_right_angle = 180
-        self.left_up = False
-        self.right_up = False
+        self.left_stage = None
+        self.right_stage = None
 
-    def calculate_angle(self, a, b, c):
-        a, b, c = np.array(a), np.array(b), np.array(c)
-        radians = np.arccos(np.clip(np.dot(b - a, c - b) /
-                                    (np.linalg.norm(b - a) * np.linalg.norm(c - b)), -1.0, 1.0))
-        angle = np.degrees(radians)
-        return angle
+    def give_feedback(self, side, msg):
+        speak(f"{msg} on your {side} arm")
 
-    def count_reps(self, frame):
-        results = model(frame, verbose=False)[0]
-        if results.keypoints is None:
-            return frame, self.left_counter, self.right_counter, None
-
-        keypoints = results.keypoints.xy.cpu().numpy()[0]
-
+    def update(self, landmarks, frame):
         try:
-            left_angle = self.calculate_angle(
-                keypoints[11], keypoints[13], keypoints[15])
-            right_angle = self.calculate_angle(
-                keypoints[12], keypoints[14], keypoints[16])
+            # Left arm
+            shoulder_l = landmarks[5]
+            elbow_l = landmarks[7]
+            wrist_l = landmarks[9]
+            angle_l = calculate_angle(shoulder_l, elbow_l, wrist_l)
 
-            # Left arm logic
-            if left_angle < 40 and not self.left_up:
-                self.left_up = True
-            if left_angle > 160 and self.left_up:
+            if angle_l > 160:
+                self.left_stage = "down"
+            if angle_l < 40 and self.left_stage == "down":
+                self.left_stage = "up"
                 self.left_counter += 1
-                self.left_up = False
-                self.speak("Left rep counted")
+                self.give_feedback("left", "Good rep")
 
-            # Right arm logic
-            if right_angle < 40 and not self.right_up:
-                self.right_up = True
-            if right_angle > 160 and self.right_up:
+            # Right arm
+            shoulder_r = landmarks[6]
+            elbow_r = landmarks[8]
+            wrist_r = landmarks[10]
+            angle_r = calculate_angle(shoulder_r, elbow_r, wrist_r)
+
+            if angle_r > 160:
+                self.right_stage = "down"
+            if angle_r < 40 and self.right_stage == "down":
+                self.right_stage = "up"
                 self.right_counter += 1
-                self.right_up = False
-                self.speak("Right rep counted")
+                self.give_feedback("right", "Good rep")
+
+            # Display angles
+            cv2.putText(frame, f"{int(angle_l)}°", tuple(elbow_l.astype(int)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+            cv2.putText(frame, f"{int(angle_r)}°", tuple(elbow_r.astype(int)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+
+            # UI
+            cv2.rectangle(frame, (10, 10), (310, 120), (50, 50, 50), -1)
+            cv2.putText(frame, "LEFT", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1)
+            cv2.putText(frame, f"Reps: {self.left_counter}", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+            cv2.putText(frame, f"Stage: {self.left_stage if self.left_stage else '-'}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
+
+            cv2.putText(frame, "RIGHT", (160, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1)
+            cv2.putText(frame, f"Reps: {self.right_counter}", (160, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+            cv2.putText(frame, f"Stage: {self.right_stage if self.right_stage else '-'}", (160, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
 
         except Exception as e:
-            pass
+            print("Pose processing error:", e)
 
-        return frame, self.left_counter, self.right_counter, None
+# Initialize webcam
+cap = cv2.VideoCapture(0)
+counter = BicepRepCounter()
 
-    def speak(self, text):
-        tts = gTTS(text)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-            tts.save(fp.name)
-            os.system(f"mpg123 {fp.name} > /dev/null 2>&1")
+print("Starting camera... Press 'q' to quit.")
 
-counter = BicepCounter()
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-def video_stream(frame):
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    result_frame, left_count, right_count, _ = counter.count_reps(frame)
-    return cv2.cvtColor(result_frame, cv2.COLOR_RGB2BGR)
+    results = model(frame, verbose=False)
+    kpts = results[0].keypoints
 
-iface = gr.Interface(fn=video_stream,
-                     inputs=gr.Image(source="webcam", streaming=True),
-                     outputs=gr.Image(),
-                     live=True,
-                     title="ROBOREP - Bicep Counter with Voice",
-                     description="Counts left and right bicep curls using webcam + gives voice feedback")
+    if kpts is not None and len(kpts.xy) > 0:
+        landmarks = kpts.xy[0].cpu().numpy()
+        draw_skeleton(frame, landmarks)
+        counter.update(landmarks, frame)
 
-if __name__ == "__main__":
-    iface.launch()
+    cv2.imshow("AI Bicep Curl Counter - Rohan", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
