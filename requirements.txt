@@ -1,7 +1,6 @@
-streamlit
-streamlit-webrtc
-ultralytics
+gradio
 opencv-python
 numpy
+ultralytics
 gTTS
 mpg123
