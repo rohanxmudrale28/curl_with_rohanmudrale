@@ -3,4 +3,5 @@ streamlit-webrtc
 ultralytics
 opencv-python-headless
 numpy
+pyttsx3
 gtts
